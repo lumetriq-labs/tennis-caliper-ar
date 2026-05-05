@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>ground-debug | tennis-caliper-ar</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Ground Detection Debug</h1>
+    <p>地面推定ロジック単体の実機検証ページ</p>
+
+    <section class="card">
+      <h2>カメラ</h2>
+      <div class="actions">
+        <button id="startBtn" type="button">カメラ開始</button>
+        <button id="stopBtn" type="button">カメラ停止</button>
+      </div>
+      <p id="cameraStatus" class="notice">カメラ未開始</p>
+    </section>
+
+    <section class="card">
+      <h2>しきい値調整</h2>
+      <label>
+        coverage 閾値
+        <input id="coverageThreshold" type="range" min="0.05" max="0.60" step="0.01" value="0.14" />
+      </label>
+      <p id="coverageThresholdText" class="notice">coverage閾値: 0.14</p>
+
+      <label>
+        edge 閾値
+        <input id="edgeThreshold" type="range" min="1.0" max="20.0" step="0.1" value="5.5" />
+      </label>
+      <p id="edgeThresholdText" class="notice">edge閾値: 5.5</p>
+    </section>
+
+    <section class="card">
+      <h2>プレビュー</h2>
+      <div class="surface" id="surface">
+        <video id="videoPreview" playsinline webkit-playsinline autoplay muted></video>
+        <div id="roiOverlay" class="tolerance-band"></div>
+      </div>
+      <p id="result" class="notice">地面推定: 待機中</p>
+      <p id="metrics" class="notice">coverage: - / edge: -</p>
+    </section>
+  </main>
+
+  <script type="module" src="./ground-debug.js"></script>
+</body>
+</html>

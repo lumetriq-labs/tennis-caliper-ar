@@ -6,11 +6,10 @@ ARを使ってテニスネット高さ調整を支援するアプリの開発リ
 
 - 引き継ぎメモ（正本）: `docs/handoff_ja.md`
 - MVP要件定義: `docs/mvp-requirements_ja.md`
-- ローカルテスト計画: `docs/local-test-plan_ja.md`
-- シミュレータ戦略: `docs/simulator-strategy_ja.md`
 - フィードバック収集ガイド: `docs/feedback-collection_ja.md`
-- クローズドベータ計画: `docs/closed-beta-plan_ja.md`
-- 初期検討ログ: `docs/tennis-net-ar_handoff_ja.md`
+
+運用上の必須は上記3つです。  
+`docs/local-test-plan_ja.md` / `docs/simulator-strategy_ja.md` / `docs/closed-beta-plan_ja.md` / `docs/tennis-net-ar_handoff_ja.md` は履歴・補助資料として必要時のみ参照します。
 
 ## Roadmap
 

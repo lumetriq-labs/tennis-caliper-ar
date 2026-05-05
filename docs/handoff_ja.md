@@ -7,6 +7,18 @@
 この文書を正本として、チャット履歴がなくても作業再開できる状態を保つ。
 利用者向けの概要は `README.md`、初期検討のログは `docs/tennis-net-ar_handoff_ja.md` に残す。
 
+### ドキュメント最小運用（現在）
+
+- 必須:
+  - `docs/handoff_ja.md`（現在地と次アクション）
+  - `docs/mvp-requirements_ja.md`（やること/やらないこと）
+  - `docs/feedback-collection_ja.md`（テスト結果の記録形式）
+- 参照用（必要時のみ）:
+  - `docs/local-test-plan_ja.md`
+  - `docs/simulator-strategy_ja.md`
+  - `docs/closed-beta-plan_ja.md`
+  - `docs/tennis-net-ar_handoff_ja.md`
+
 ## 再開チェックリスト
 
 1. `git status` で差分を確認する。
@@ -82,15 +94,14 @@
 - `README.md`: 外部向け概要と入口
 - `docs/handoff_ja.md`: 実装再開の正本
 - `docs/mvp-requirements_ja.md`: 現行要件
-- `docs/simulator-strategy_ja.md`: シミュレータ中心開発の方針と完了条件
-- `docs/closed-beta-plan_ja.md`: 早期配布と失敗フィードバック回収の運用
-- `docs/tennis-net-ar_handoff_ja.md`: 初期検討ログ（履歴）
+- `docs/feedback-collection_ja.md`: フィードバック記録ルール
+- その他の docs は補助資料として保持し、更新は必要時のみ
 
 ## 作業中断メモ
 
 | 項目 | 内容 |
 |------|------|
-| いまの焦点 | 自動推定の安定化とクローズドベータ準備 |
+| いまの焦点 | 機能充足性（実カメラ表示 / ガイド更新 / JSON記録）の確認 |
 | 未完 | 低信頼時の挙動最適化（判定停止/警告強化） |
-| 次の一手 | 特徴量ログを使って誤検出パターンを分類し、閾値調整方針を決める |
+| 次の一手 | 機能充足性が揃ったら、斜め撮影と低照度を優先して精度改善に着手する |
 

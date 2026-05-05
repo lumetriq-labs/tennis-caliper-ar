@@ -39,7 +39,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.6";
+const VERSION = "v0.2.7";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }
@@ -51,6 +51,7 @@ let calibrationState = "idle";
 let calibrationPoints = 0;
 let calibrationPointPositions = [];
 let autoReference = { ready: false, confidence: 0, yPercent: 0, xStartPercent: 0, xEndPercent: 0 };
+let autoReferenceAngleDeg = 0;
 let groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
 let groundRoiStartRatio = 0.68;
 let groundRoiEndRatio = 0.96;
@@ -62,11 +63,14 @@ let groundConsecutiveOk = 0;
 let groundConsecutiveMiss = 0;
 const GROUND_OK_FRAMES_TO_LOCK = 3;
 const GROUND_MISS_FRAMES_TO_DROP = 5;
+const TARGET_HEIGHT_OFFSET_PERCENT_FROM_GROUND = 20;
 const autoReferenceHistory = [];
 const AUTO_REFERENCE_HISTORY_SIZE = 6;
 let detectionDebug = {
   rowStrength: 0,
   colStrength: 0,
+  bandSlope: 0,
+  bandAngleDeg: 0,
   tHorizontalScore: 0,
   tVerticalScoreSym: 0,
   tVerticalScoreDown: 0,
@@ -285,6 +289,17 @@ function judgeDelta(deltaCm, toleranceCm) {
   return "低い（調整が必要）";
 }
 
+function getTargetLineYPercent() {
+  const groundYPercent = groundRoiEndRatio * 100;
+  const targetY = groundYPercent - TARGET_HEIGHT_OFFSET_PERCENT_FROM_GROUND;
+  return Math.max(8, Math.min(88, targetY));
+}
+
+function getOverlayAngleDeg() {
+  if (!(referenceModeEl.value === "auto" && autoReference.ready)) return 0;
+  return autoReferenceAngleDeg;
+}
+
 function updateGuideLine(deltaCm, state) {
   if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
     guideLineEl.classList.add("hidden");
@@ -302,9 +317,12 @@ function updateGuideLine(deltaCm, state) {
   guideStemEl.classList.add(state);
 
   const clamped = Math.max(-8, Math.min(8, deltaCm));
-  const y = 50 - (clamped / 8) * 20;
+  const targetY = getTargetLineYPercent();
+  const y = targetY - (clamped / 8) * 20;
   guideLineEl.style.top = `${y}%`;
   guideStemEl.style.top = `${y}%`;
+  const angleDeg = getOverlayAngleDeg();
+  guideLineEl.style.transform = `rotate(${angleDeg.toFixed(2)}deg)`;
 
   const xCenter = autoReference.ready
     ? (autoReference.xStartPercent + autoReference.xEndPercent) / 2
@@ -321,11 +339,14 @@ function updateToleranceOverlay(toleranceCm) {
   centerLineEl.classList.remove("hidden");
   toleranceBandEl.classList.remove("hidden");
 
-  const centerY = 50;
+  const centerY = getTargetLineYPercent();
   const halfRangePercent = (Math.max(1, Math.min(5, toleranceCm)) / 8) * 20;
   toleranceBandEl.style.top = `${centerY - halfRangePercent}%`;
   toleranceBandEl.style.height = `${halfRangePercent * 2}%`;
   centerLineEl.style.top = `${centerY}%`;
+  const angleDeg = getOverlayAngleDeg();
+  centerLineEl.style.transform = `rotate(${angleDeg.toFixed(2)}deg)`;
+  toleranceBandEl.style.transform = `rotate(${angleDeg.toFixed(2)}deg)`;
 }
 
 function adjustDeltaByReferenceConfidence(deltaCm) {
@@ -458,6 +479,7 @@ function applySmoothedAutoReference() {
   if (autoReferenceHistory.length === 0) {
     autoReference.ready = false;
     autoReference.confidence = 0;
+    autoReferenceAngleDeg = 0;
     return;
   }
 
@@ -465,6 +487,7 @@ function applySmoothedAutoReference() {
   if (valid.length < 3) {
     autoReference.ready = false;
     autoReference.confidence = 0;
+    autoReferenceAngleDeg = 0;
     return;
   }
 
@@ -687,6 +710,7 @@ function estimateGroundPresenceFromVideo() {
   detectionDebug.groundStableDetected = groundStableDetected;
   detectionDebug.groundConsecutiveOk = groundConsecutiveOk;
   detectionDebug.groundConsecutiveMiss = groundConsecutiveMiss;
+  detectionDebug.targetLineYPercent = Number(getTargetLineYPercent().toFixed(3));
   updateGroundDebugUi();
 }
 
@@ -961,6 +985,7 @@ function detectAutoReferenceFromVideo() {
   }
   const yOnBandAt = (x) => clamp(Math.round((bandSlope * x) + bandOffset), yMin, yMax - 1);
   const bandYAtX = yOnBandAt(bestX);
+  const bandAngleDeg = Math.atan(bandSlope) * (180 / Math.PI);
 
   // T字近傍（交点周辺）で横線・縦線の白画素密度を評価する
   // 公式ネットは中央が少し下がるため、縦線は「交点より下側」をやや重視する。
@@ -1016,6 +1041,7 @@ function detectAutoReferenceFromVideo() {
     rowStrength,
     colStrength,
     bandSlope,
+    bandAngleDeg,
     tHorizontalScore,
     tVerticalScoreSym,
     tVerticalScoreDown,
@@ -1028,6 +1054,7 @@ function detectAutoReferenceFromVideo() {
   sample.yPercent = (bandYAtX / targetHeight) * 100;
   sample.xStartPercent = (xStart / targetWidth) * 100;
   sample.xEndPercent = (xEnd / targetWidth) * 100;
+  autoReferenceAngleDeg = bandAngleDeg;
   pushAutoReferenceSample(sample);
   applySmoothedAutoReference();
 }
@@ -1060,7 +1087,7 @@ function handleVideoProgress() {
   }
   const simulatedDelta =
     inputSourceEl.value === "camera"
-      ? Number((((50 - autoReference.yPercent) / 20) * 8).toFixed(1))
+      ? Number((((getTargetLineYPercent() - autoReference.yPercent) / 20) * 8).toFixed(1))
       : simulatedDeltaFromVideo(videoPreviewEl);
   deltaCmEl.value = String(simulatedDelta);
   if (inputSourceEl.value === "video") {

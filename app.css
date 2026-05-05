@@ -127,6 +127,7 @@ button {
   height: 3px;
   pointer-events: none;
   box-shadow: 0 0 8px rgba(148, 163, 184, 0.8);
+  transform-origin: 50% 50%;
 }
 
 .guide-line.ok {
@@ -179,6 +180,7 @@ button {
   height: 1px;
   background: rgba(226, 232, 240, 0.85);
   pointer-events: none;
+  transform-origin: 50% 50%;
 }
 
 .tolerance-band {
@@ -190,6 +192,7 @@ button {
   border-top: 1px dashed rgba(34, 197, 94, 0.8);
   border-bottom: 1px dashed rgba(34, 197, 94, 0.8);
   pointer-events: none;
+  transform-origin: 50% 50%;
 }
 
 .roi-outline {

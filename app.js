@@ -268,7 +268,9 @@ function setInputSourceUi() {
   deltaCmEl.disabled = usingVideoInput;
   startCalibrationBtnEl.disabled = !manualMode;
   capturePointBtnEl.disabled = !(manualMode && calibrationState === "capturing");
-  surfaceTapLayerEl.disabled = !(usingVideoInput && manualMode && calibrationState === "capturing");
+  const tapLayerActive = usingVideoInput && manualMode && calibrationState === "capturing";
+  surfaceTapLayerEl.disabled = !tapLayerActive;
+  surfaceTapLayerEl.classList.toggle("active", tapLayerActive);
 
   if (inputSourceEl.value === "video") {
     sourceNoticeEl.textContent = "保存動画をダミーカメラ入力として使います。差分値は選択シナリオに応じて擬似生成されます。";
@@ -367,8 +369,9 @@ async function startCamera() {
       video: { facingMode: { ideal: "environment" } },
       audio: false
     });
-    videoPreviewEl.srcObject = cameraStream;
+    videoPreviewEl.pause();
     videoPreviewEl.removeAttribute("src");
+    videoPreviewEl.srcObject = cameraStream;
     await videoPreviewEl.play();
     videoStatusEl.textContent = "カメラ入力中";
     autoReference.ready = false;
@@ -638,6 +641,8 @@ function exportFeedbackJson() {
 inputSourceEl.addEventListener("change", () => {
   if (inputSourceEl.value !== "camera") {
     stopCamera();
+  } else {
+    startCamera();
   }
   setInputSourceUi();
   updateCalibrationStatus();

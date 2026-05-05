@@ -17,14 +17,7 @@
 
     <section class="card">
       <h2>入力</h2>
-      <label>
-        入力ソース
-        <select id="inputSource">
-          <option value="simulation" selected>シミュレーション値（開発用）</option>
-          <option value="video">保存動画（ダミーカメラ入力）</option>
-          <option value="camera">実カメラ（iPhone実機テスト）</option>
-        </select>
-      </label>
+      <input id="inputSource" type="hidden" value="camera" />
 
       <div id="cameraControlsRow" class="actions hidden">
         <button id="startCameraBtn" type="button">カメラ開始</button>
@@ -108,7 +101,7 @@
     </section>
 
     <section class="card hidden" id="videoPreviewCard">
-      <h2>動画入力プレビュー</h2>
+      <h2>カメラ入力プレビュー</h2>
       <p class="notice">
         任意: 画面下部の地面にテニスボールを置くと、基準推定の安定化に役立つ場合があります。
       </p>
@@ -122,6 +115,7 @@
         <button id="surfaceTapLayer" class="surface-tap-layer" type="button" aria-label="キャリブレーション点を記録"></button>
       </div>
       <p id="videoStatus" class="notice">動画未選択</p>
+      <p id="groundDebug" class="notice hidden">地面推定: 未評価</p>
     </section>
 
     <section class="card">
@@ -171,6 +165,7 @@
     </section>
   </main>
 
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

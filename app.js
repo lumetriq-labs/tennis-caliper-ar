@@ -17,6 +17,7 @@ const toleranceBandEl = document.getElementById("toleranceBand");
 const guideLineEl = document.getElementById("guideLine");
 const guideStemEl = document.getElementById("guideStem");
 const videoStatusEl = document.getElementById("videoStatus");
+const groundDebugEl = document.getElementById("groundDebug");
 const toleranceModeEl = document.getElementById("toleranceMode");
 const environmentProfileEl = document.getElementById("environmentProfile");
 const courtTypeEl = document.getElementById("courtType");
@@ -38,7 +39,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.3";
+const VERSION = "v0.2.4";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }
@@ -50,6 +51,7 @@ let calibrationState = "idle";
 let calibrationPoints = 0;
 let calibrationPointPositions = [];
 let autoReference = { ready: false, confidence: 0, yPercent: 0, xStartPercent: 0, xEndPercent: 0 };
+let groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
 const autoReferenceHistory = [];
 const AUTO_REFERENCE_HISTORY_SIZE = 6;
 let detectionDebug = {
@@ -65,6 +67,197 @@ let detectionDebug = {
 
 const detectCanvas = document.createElement("canvas");
 const detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true });
+const gpuCanvas = document.createElement("canvas");
+let gpuGl = null;
+let gpuProgram = null;
+let gpuVertexBuffer = null;
+let gpuFrameTexture = null;
+let gpuOutputTexture = null;
+let gpuFramebuffer = null;
+let gpuBufferWidth = 0;
+let gpuBufferHeight = 0;
+let cvReady = false;
+let cvRuntimeInitStarted = false;
+
+const gpuVertexShaderSource = `#version 300 es
+  in vec2 a_position;
+  out vec2 v_uv;
+  void main() {
+    v_uv = a_position * 0.5 + 0.5;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+  }
+`;
+
+const gpuMaskFragmentShaderSource = `#version 300 es
+  precision mediump float;
+  in vec2 v_uv;
+  out vec4 outColor;
+  uniform sampler2D u_video;
+  void main() {
+    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+    vec3 c = texture(u_video, uv).rgb;
+    float luma = dot(c, vec3(0.299, 0.587, 0.114));
+    float maxCh = max(c.r, max(c.g, c.b));
+    float minCh = min(c.r, min(c.g, c.b));
+    float sat = maxCh - minCh;
+    float isWhite = step(0.72, luma) * (1.0 - step(0.11, sat));
+    outColor = vec4(isWhite, isWhite, isWhite, 1.0);
+  }
+`;
+
+function initCvRuntimeIfNeeded() {
+  if (cvReady || cvRuntimeInitStarted) return;
+  if (!("cv" in window)) return;
+  cvRuntimeInitStarted = true;
+  const cvGlobal = window.cv;
+  if (cvGlobal?.Mat) {
+    cvReady = true;
+    return;
+  }
+  cvGlobal.onRuntimeInitialized = () => {
+    cvReady = true;
+  };
+}
+
+function createGpuShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const info = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(`GPU shader compile error: ${info}`);
+  }
+  return shader;
+}
+
+function ensureGpuPreprocess(targetWidth, targetHeight) {
+  if (!gpuGl) {
+    gpuGl = gpuCanvas.getContext("webgl2", { premultipliedAlpha: false, antialias: false });
+    if (!gpuGl) return false;
+
+    const vs = createGpuShader(gpuGl, gpuGl.VERTEX_SHADER, gpuVertexShaderSource);
+    const fs = createGpuShader(gpuGl, gpuGl.FRAGMENT_SHADER, gpuMaskFragmentShaderSource);
+    gpuProgram = gpuGl.createProgram();
+    gpuGl.attachShader(gpuProgram, vs);
+    gpuGl.attachShader(gpuProgram, fs);
+    gpuGl.bindAttribLocation(gpuProgram, 0, "a_position");
+    gpuGl.linkProgram(gpuProgram);
+    gpuGl.deleteShader(vs);
+    gpuGl.deleteShader(fs);
+    if (!gpuGl.getProgramParameter(gpuProgram, gpuGl.LINK_STATUS)) {
+      throw new Error(`GPU program link error: ${gpuGl.getProgramInfoLog(gpuProgram)}`);
+    }
+
+    gpuVertexBuffer = gpuGl.createBuffer();
+    gpuGl.bindBuffer(gpuGl.ARRAY_BUFFER, gpuVertexBuffer);
+    gpuGl.bufferData(
+      gpuGl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+      gpuGl.STATIC_DRAW
+    );
+
+    gpuFrameTexture = gpuGl.createTexture();
+    gpuGl.bindTexture(gpuGl.TEXTURE_2D, gpuFrameTexture);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_MIN_FILTER, gpuGl.LINEAR);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_MAG_FILTER, gpuGl.LINEAR);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_WRAP_S, gpuGl.CLAMP_TO_EDGE);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_WRAP_T, gpuGl.CLAMP_TO_EDGE);
+  }
+
+  if (gpuBufferWidth !== targetWidth || gpuBufferHeight !== targetHeight) {
+    gpuBufferWidth = targetWidth;
+    gpuBufferHeight = targetHeight;
+    gpuCanvas.width = targetWidth;
+    gpuCanvas.height = targetHeight;
+
+    if (gpuOutputTexture) gpuGl.deleteTexture(gpuOutputTexture);
+    gpuOutputTexture = gpuGl.createTexture();
+    gpuGl.bindTexture(gpuGl.TEXTURE_2D, gpuOutputTexture);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_MIN_FILTER, gpuGl.NEAREST);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_MAG_FILTER, gpuGl.NEAREST);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_WRAP_S, gpuGl.CLAMP_TO_EDGE);
+    gpuGl.texParameteri(gpuGl.TEXTURE_2D, gpuGl.TEXTURE_WRAP_T, gpuGl.CLAMP_TO_EDGE);
+    gpuGl.texImage2D(
+      gpuGl.TEXTURE_2D,
+      0,
+      gpuGl.RGBA,
+      targetWidth,
+      targetHeight,
+      0,
+      gpuGl.RGBA,
+      gpuGl.UNSIGNED_BYTE,
+      null
+    );
+
+    if (gpuFramebuffer) gpuGl.deleteFramebuffer(gpuFramebuffer);
+    gpuFramebuffer = gpuGl.createFramebuffer();
+    gpuGl.bindFramebuffer(gpuGl.FRAMEBUFFER, gpuFramebuffer);
+    gpuGl.framebufferTexture2D(
+      gpuGl.FRAMEBUFFER,
+      gpuGl.COLOR_ATTACHMENT0,
+      gpuGl.TEXTURE_2D,
+      gpuOutputTexture,
+      0
+    );
+    gpuGl.bindFramebuffer(gpuGl.FRAMEBUFFER, null);
+  }
+
+  return true;
+}
+
+function buildWhiteMaskWithGpuAndCv(targetWidth, targetHeight, yMin, yMax) {
+  if (!cvReady) return null;
+  if (!ensureGpuPreprocess(targetWidth, targetHeight)) return null;
+
+  gpuGl.viewport(0, 0, targetWidth, targetHeight);
+  gpuGl.useProgram(gpuProgram);
+  gpuGl.bindFramebuffer(gpuGl.FRAMEBUFFER, gpuFramebuffer);
+  gpuGl.bindBuffer(gpuGl.ARRAY_BUFFER, gpuVertexBuffer);
+  gpuGl.enableVertexAttribArray(0);
+  gpuGl.vertexAttribPointer(0, 2, gpuGl.FLOAT, false, 0, 0);
+
+  gpuGl.activeTexture(gpuGl.TEXTURE0);
+  gpuGl.bindTexture(gpuGl.TEXTURE_2D, gpuFrameTexture);
+  gpuGl.pixelStorei(gpuGl.UNPACK_FLIP_Y_WEBGL, false);
+  gpuGl.texImage2D(
+    gpuGl.TEXTURE_2D,
+    0,
+    gpuGl.RGBA,
+    gpuGl.RGBA,
+    gpuGl.UNSIGNED_BYTE,
+    videoPreviewEl
+  );
+
+  const videoLoc = gpuGl.getUniformLocation(gpuProgram, "u_video");
+  gpuGl.uniform1i(videoLoc, 0);
+  gpuGl.drawArrays(gpuGl.TRIANGLES, 0, 6);
+
+  const rgba = new Uint8Array(targetWidth * targetHeight * 4);
+  gpuGl.readPixels(0, 0, targetWidth, targetHeight, gpuGl.RGBA, gpuGl.UNSIGNED_BYTE, rgba);
+  gpuGl.bindFramebuffer(gpuGl.FRAMEBUFFER, null);
+
+  const binary = new Uint8Array(targetWidth * targetHeight);
+  for (let y = yMin; y < yMax; y += 1) {
+    for (let x = 0; x < targetWidth; x += 1) {
+      const srcIdx = ((targetHeight - 1 - y) * targetWidth + x) * 4;
+      binary[y * targetWidth + x] = rgba[srcIdx] > 127 ? 255 : 0;
+    }
+  }
+
+  const cvGlobal = window.cv;
+  const mat = cvGlobal.matFromArray(targetHeight, targetWidth, cvGlobal.CV_8UC1, binary);
+  const kernel = cvGlobal.Mat.ones(3, 3, cvGlobal.CV_8U);
+  cvGlobal.morphologyEx(mat, mat, cvGlobal.MORPH_OPEN, kernel);
+  cvGlobal.morphologyEx(mat, mat, cvGlobal.MORPH_CLOSE, kernel);
+  const mask = new Uint8Array(targetWidth * targetHeight);
+  for (let i = 0; i < mask.length; i += 1) {
+    mask[i] = mat.data[i] > 0 ? 1 : 0;
+  }
+  kernel.delete();
+  mat.delete();
+  return mask;
+}
 
 function evaluateEnvironmentRisk(toleranceCm, environmentProfile) {
   if (toleranceCm === 1 && (environmentProfile === "NIGHT_COURT" || environmentProfile === "INDOOR_LED")) {
@@ -109,7 +302,7 @@ function updateGuideLine(deltaCm, state) {
   guideStemEl.style.left = `${xCenter}%`;
 }
 
-function updateToleranceOverlay(toleranceCm) {
+function updateToleranceOverlay(toleranceCm, deltaCm) {
   if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
     centerLineEl.classList.add("hidden");
     toleranceBandEl.classList.add("hidden");
@@ -118,13 +311,17 @@ function updateToleranceOverlay(toleranceCm) {
   centerLineEl.classList.remove("hidden");
   toleranceBandEl.classList.remove("hidden");
 
+  const clamped = Math.max(-8, Math.min(8, deltaCm));
+  const centerY = 50 - (clamped / 8) * 20;
   const halfRangePercent = (Math.max(1, Math.min(5, toleranceCm)) / 8) * 20;
-  toleranceBandEl.style.top = `${50 - halfRangePercent}%`;
+  // 許容帯を「ガイド線中心」に合わせて動かす
+  toleranceBandEl.style.top = `${centerY - halfRangePercent}%`;
   toleranceBandEl.style.height = `${halfRangePercent * 2}%`;
+  centerLineEl.style.top = `${centerY}%`;
 }
 
 function adjustDeltaByReferenceConfidence(deltaCm) {
-  if (referenceModeEl.value !== "auto" || inputSourceEl.value !== "video") {
+  if (referenceModeEl.value !== "auto" || !(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
     return { effectiveDelta: deltaCm, note: "" };
   }
 
@@ -145,14 +342,12 @@ function adjustDeltaByReferenceConfidence(deltaCm) {
 }
 
 function isReferenceReady() {
-  if (inputSourceEl.value === "simulation") return true;
   if (referenceModeEl.value === "auto") return autoReference.ready;
   return calibrationState === "ready";
 }
 
 function updateResult() {
   const toleranceCm = Number(toleranceModeEl.value);
-  updateToleranceOverlay(toleranceCm);
 
   if (!isReferenceReady()) {
     if (referenceModeEl.value === "auto") {
@@ -163,6 +358,7 @@ function updateResult() {
       guidanceTextEl.textContent = "「キャリブレーション開始」→「基準点を記録」を2回行ってください。";
     }
     updateGuideLine(0, "pending");
+    updateToleranceOverlay(toleranceCm, 0);
     return;
   }
 
@@ -191,6 +387,8 @@ function updateResult() {
   if (deltaJudge.startsWith("OK")) updateGuideLine(adjusted.effectiveDelta, "ok");
   else if (deltaJudge.startsWith("高い")) updateGuideLine(adjusted.effectiveDelta, "high");
   else updateGuideLine(adjusted.effectiveDelta, "low");
+
+  updateToleranceOverlay(toleranceCm, adjusted.effectiveDelta);
 }
 
 function clearCalibrationPoints() {
@@ -209,7 +407,7 @@ function renderCalibrationPoints() {
 }
 
 function renderAutoReference() {
-  if (!(referenceModeEl.value === "auto" && autoReference.ready && inputSourceEl.value === "video")) {
+  if (!(referenceModeEl.value === "auto" && autoReference.ready && (inputSourceEl.value === "video" || inputSourceEl.value === "camera"))) {
     autoReferenceLineEl.classList.add("hidden");
     return;
   }
@@ -290,13 +488,89 @@ function setInputSourceUi() {
     videoStatusEl.textContent = "シミュレーション入力モード";
   }
 
+  if (groundDebugEl) {
+    groundDebugEl.classList.toggle("hidden", !usingVideoInput);
+  }
+
   renderAutoReference();
+}
+
+function updateGroundDebugUi() {
+  if (!groundDebugEl) return;
+  if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
+    groundDebugEl.textContent = "地面推定: 未評価";
+    return;
+  }
+  if (!groundDebug.ready) {
+    groundDebugEl.textContent = "地面推定: 評価中";
+    return;
+  }
+  const state = groundDebug.detected ? "OK" : "未検出";
+  const coverage = (groundDebug.coverage * 100).toFixed(0);
+  const edge = groundDebug.edgeStrength.toFixed(1);
+  groundDebugEl.textContent = `地面推定: ${state} (coverage ${coverage}% / edge ${edge})`;
+}
+
+function estimateGroundPresenceFromVideo() {
+  if (!detectCtx || !Number.isFinite(videoPreviewEl.videoWidth) || videoPreviewEl.videoWidth <= 0) {
+    groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
+    updateGroundDebugUi();
+    return;
+  }
+
+  const targetWidth = 192;
+  const scale = targetWidth / videoPreviewEl.videoWidth;
+  const targetHeight = Math.max(108, Math.round(videoPreviewEl.videoHeight * scale));
+  detectCanvas.width = targetWidth;
+  detectCanvas.height = targetHeight;
+  detectCtx.drawImage(videoPreviewEl, 0, 0, targetWidth, targetHeight);
+  const frame = detectCtx.getImageData(0, 0, targetWidth, targetHeight);
+
+  const yStart = Math.floor(targetHeight * 0.68);
+  const yEnd = Math.floor(targetHeight * 0.96);
+  let total = 0;
+  let candidate = 0;
+  let edgeAcc = 0;
+
+  for (let y = yStart; y < yEnd; y += 1) {
+    for (let x = 0; x < targetWidth; x += 2) {
+      const idx = (y * targetWidth + x) * 4;
+      const r = frame.data[idx];
+      const g = frame.data[idx + 1];
+      const b = frame.data[idx + 2];
+      const luma = (0.299 * r) + (0.587 * g) + (0.114 * b);
+      const maxCh = Math.max(r, g, b);
+      const minCh = Math.min(r, g, b);
+      const sat = maxCh - minCh;
+      if (luma > 24 && luma < 240 && sat > 16) {
+        candidate += 1;
+      }
+      if (y + 1 < yEnd) {
+        const idx2 = ((y + 1) * targetWidth + x) * 4;
+        const r2 = frame.data[idx2];
+        const g2 = frame.data[idx2 + 1];
+        const b2 = frame.data[idx2 + 2];
+        const luma2 = (0.299 * r2) + (0.587 * g2) + (0.114 * b2);
+        edgeAcc += Math.abs(luma2 - luma);
+      }
+      total += 1;
+    }
+  }
+
+  const coverage = total > 0 ? candidate / total : 0;
+  const edgeStrength = total > 0 ? edgeAcc / total : 0;
+  const detected = coverage >= 0.22 && edgeStrength >= 8.5;
+  groundDebug = { ready: true, detected, coverage, edgeStrength };
+  detectionDebug.groundCoverage = Number(coverage.toFixed(3));
+  detectionDebug.groundEdgeStrength = Number(edgeStrength.toFixed(3));
+  detectionDebug.groundDetected = detected;
+  updateGroundDebugUi();
 }
 
 function updateCalibrationStatus() {
   if (referenceModeEl.value === "auto") {
-    if (inputSourceEl.value !== "video") {
-      calibrationStatusEl.textContent = "状態: 自動モード（シミュレーション入力では常時判定可能）";
+    if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
+      calibrationStatusEl.textContent = "状態: 自動モード";
     } else if (!autoReference.ready) {
       calibrationStatusEl.textContent = "状態: 自動推定中（基準ラインを検出中）";
     } else {
@@ -412,9 +686,9 @@ function stopCamera() {
 }
 
 function capturePointFromSurface(event) {
-  if (inputSourceEl.value !== "video" || referenceModeEl.value !== "manual" || calibrationState !== "capturing") return;
-  if (!videoPreviewEl.src) {
-    guidanceTextEl.textContent = "先に動画ファイルを選択してください。";
+  if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera") || referenceModeEl.value !== "manual" || calibrationState !== "capturing") return;
+  if (!videoPreviewEl.src && !videoPreviewEl.srcObject) {
+    guidanceTextEl.textContent = "先にカメラを開始してください。";
     return;
   }
   const rect = calibrationSurfaceEl.getBoundingClientRect();
@@ -427,6 +701,7 @@ function capturePointFromSurface(event) {
 }
 
 function detectAutoReferenceFromVideo() {
+  initCvRuntimeIfNeeded();
   const sample = { ready: false, confidence: 0, yPercent: 0, xStartPercent: 0, xEndPercent: 0 };
   if (!detectCtx || !Number.isFinite(videoPreviewEl.videoWidth) || videoPreviewEl.videoWidth <= 0) {
     pushAutoReferenceSample(sample);
@@ -440,26 +715,37 @@ function detectAutoReferenceFromVideo() {
   detectCanvas.height = targetHeight;
   detectCtx.drawImage(videoPreviewEl, 0, 0, targetWidth, targetHeight);
   const frame = detectCtx.getImageData(0, 0, targetWidth, targetHeight);
-  const whiteMask = new Uint8Array(targetWidth * targetHeight);
+  const whiteMaskFallback = new Uint8Array(targetWidth * targetHeight);
   const rowCounts = new Array(targetHeight).fill(0);
   const colCounts = new Array(targetWidth).fill(0);
 
   const yMin = Math.floor(targetHeight * 0.2);
   const yMax = Math.floor(targetHeight * 0.85);
+  let whiteMask = buildWhiteMaskWithGpuAndCv(targetWidth, targetHeight, yMin, yMax);
+
   for (let y = yMin; y < yMax; y += 1) {
     for (let x = 0; x < targetWidth; x += 1) {
-      const idx = (y * targetWidth + x) * 4;
-      const r = frame.data[idx];
-      const g = frame.data[idx + 1];
-      const b = frame.data[idx + 2];
-      const bright = r + g + b > 640;
-      const nearWhite = Math.abs(r - g) < 24 && Math.abs(g - b) < 24;
-      if (bright && nearWhite) {
-        whiteMask[y * targetWidth + x] = 1;
+      const id = y * targetWidth + x;
+      if (!whiteMask) {
+        const idx = id * 4;
+        const r = frame.data[idx];
+        const g = frame.data[idx + 1];
+        const b = frame.data[idx + 2];
+        const bright = r + g + b > 640;
+        const nearWhite = Math.abs(r - g) < 24 && Math.abs(g - b) < 24;
+        if (bright && nearWhite) {
+          whiteMaskFallback[id] = 1;
+          rowCounts[y] += 1;
+          colCounts[x] += 1;
+        }
+      } else if (whiteMask[id] === 1) {
         rowCounts[y] += 1;
         colCounts[x] += 1;
       }
     }
+  }
+  if (!whiteMask) {
+    whiteMask = whiteMaskFallback;
   }
 
   let bestY = -1;
@@ -633,6 +919,7 @@ function attachVideo(file) {
 
 function handleVideoProgress() {
   if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) return;
+  estimateGroundPresenceFromVideo();
   if (referenceModeEl.value === "auto") {
     detectAutoReferenceFromVideo();
     renderAutoReference();
@@ -712,16 +999,9 @@ function exportFeedbackJson() {
   updateFeedbackStatus("JSONを書き出しました");
 }
 
-inputSourceEl.addEventListener("change", () => {
-  if (inputSourceEl.value !== "camera") {
-    stopCamera();
-  } else {
-    startCamera();
-  }
-  setInputSourceUi();
-  updateCalibrationStatus();
-  updateResult();
-});
+if (inputSourceEl) {
+  inputSourceEl.value = "camera";
+}
 
 referenceModeEl.addEventListener("change", () => {
   calibrationState = "idle";
@@ -765,3 +1045,4 @@ setInputSourceUi();
 updateCalibrationStatus();
 updateFeedbackStatus("未記録");
 updateResult();
+startCamera();

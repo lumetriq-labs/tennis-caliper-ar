@@ -38,7 +38,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.2";
+const VERSION = "v0.2.3";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }

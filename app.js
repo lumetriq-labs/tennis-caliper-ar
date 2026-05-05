@@ -15,6 +15,7 @@ const autoReferenceLineEl = document.getElementById("autoReferenceLine");
 const centerLineEl = document.getElementById("centerLine");
 const toleranceBandEl = document.getElementById("toleranceBand");
 const guideLineEl = document.getElementById("guideLine");
+const guideStemEl = document.getElementById("guideStem");
 const videoStatusEl = document.getElementById("videoStatus");
 const toleranceModeEl = document.getElementById("toleranceMode");
 const environmentProfileEl = document.getElementById("environmentProfile");
@@ -35,6 +36,12 @@ const feedbackStepsEl = document.getElementById("feedbackSteps");
 const addFeedbackBtnEl = document.getElementById("addFeedbackBtn");
 const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
+const versionEl = document.getElementById("version");
+
+const VERSION = "v0.2.0";
+if (versionEl) {
+  versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
+}
 
 let currentVideoUrl = null;
 let cameraStream = null;
@@ -78,18 +85,28 @@ function judgeDelta(deltaCm, toleranceCm) {
 function updateGuideLine(deltaCm, state) {
   if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
     guideLineEl.classList.add("hidden");
+    guideStemEl.classList.add("hidden");
     centerLineEl.classList.add("hidden");
     toleranceBandEl.classList.add("hidden");
     return;
   }
 
   guideLineEl.classList.remove("hidden");
+  guideStemEl.classList.remove("hidden");
   guideLineEl.classList.remove("ok", "high", "low", "pending");
+  guideStemEl.classList.remove("ok", "high", "low", "pending");
   guideLineEl.classList.add(state);
+  guideStemEl.classList.add(state);
 
   const clamped = Math.max(-8, Math.min(8, deltaCm));
   const y = 50 - (clamped / 8) * 20;
   guideLineEl.style.top = `${y}%`;
+  guideStemEl.style.top = `${y}%`;
+
+  const xCenter = autoReference.ready
+    ? (autoReference.xStartPercent + autoReference.xEndPercent) / 2
+    : 50;
+  guideStemEl.style.left = `${xCenter}%`;
 }
 
 function updateToleranceOverlay(toleranceCm) {
@@ -140,7 +157,7 @@ function updateResult() {
   if (!isReferenceReady()) {
     if (referenceModeEl.value === "auto") {
       resultTextEl.textContent = "判定前に自動基準推定を待ってください。";
-      guidanceTextEl.textContent = "動画を再生し、白いライン/ホワイトテープが見える状態にしてください。";
+      guidanceTextEl.textContent = "動画を再生し、ネット上端のホワイトバンドが見える状態にしてください。";
     } else {
       resultTextEl.textContent = "判定前にキャリブレーションを完了してください。";
       guidanceTextEl.textContent = "「キャリブレーション開始」→「基準点を記録」を2回行ってください。";

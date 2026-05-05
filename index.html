@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>tennis-caliper-ar (local prototype)</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
@@ -10,6 +13,7 @@
   <main class="container">
     <h1>tennis-caliper-ar</h1>
     <p>ローカル検証用プロトタイプ（判定ロジック先行）</p>
+    <small id="version"></small>
 
     <section class="card">
       <h2>入力</h2>
@@ -88,7 +92,7 @@
       <label>
         基準推定モード
         <select id="referenceMode">
-          <option value="auto" selected>自動（ライン/ホワイトテープ推定）</option>
+          <option value="auto" selected>自動（ホワイトバンド推定）</option>
           <option value="manual">手動（2点タップ）</option>
         </select>
       </label>
@@ -114,6 +118,7 @@
         <div id="centerLine" class="center-line hidden"></div>
         <div id="toleranceBand" class="tolerance-band hidden"></div>
         <div id="guideLine" class="guide-line hidden"></div>
+        <div id="guideStem" class="guide-stem hidden"></div>
         <button id="surfaceTapLayer" class="surface-tap-layer" type="button" aria-label="キャリブレーション点を記録"></button>
       </div>
       <p id="videoStatus" class="notice">動画未選択</p>

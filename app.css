@@ -133,6 +133,30 @@ button {
   background: #94a3b8;
 }
 
+.guide-stem {
+  position: absolute;
+  width: 3px;
+  height: 10%;
+  pointer-events: none;
+  box-shadow: 0 0 8px rgba(148, 163, 184, 0.8);
+}
+
+.guide-stem.ok {
+  background: #22c55e;
+}
+
+.guide-stem.high {
+  background: #ef4444;
+}
+
+.guide-stem.low {
+  background: #f59e0b;
+}
+
+.guide-stem.pending {
+  background: #94a3b8;
+}
+
 .center-line {
   position: absolute;
   left: 8%;

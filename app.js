@@ -39,7 +39,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.4";
+const VERSION = "v0.2.5";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }
@@ -52,6 +52,16 @@ let calibrationPoints = 0;
 let calibrationPointPositions = [];
 let autoReference = { ready: false, confidence: 0, yPercent: 0, xStartPercent: 0, xEndPercent: 0 };
 let groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
+let groundRoiStartRatio = 0.68;
+let groundRoiEndRatio = 0.96;
+let groundMissStreak = 0;
+let groundEffectiveCoverageThreshold = 0.14;
+let groundEffectiveEdgeThreshold = 5.5;
+let groundStableDetected = false;
+let groundConsecutiveOk = 0;
+let groundConsecutiveMiss = 0;
+const GROUND_OK_FRAMES_TO_LOCK = 3;
+const GROUND_MISS_FRAMES_TO_DROP = 5;
 const autoReferenceHistory = [];
 const AUTO_REFERENCE_HISTORY_SIZE = 6;
 let detectionDebug = {
@@ -346,6 +356,13 @@ function isReferenceReady() {
   return calibrationState === "ready";
 }
 
+function isGroundReadyForJudgement() {
+  const usingCameraInput = inputSourceEl.value === "camera";
+  const usingAutoMode = referenceModeEl.value === "auto";
+  if (!usingCameraInput || !usingAutoMode) return true;
+  return groundDebug.ready && groundStableDetected;
+}
+
 function updateResult() {
   const toleranceCm = Number(toleranceModeEl.value);
 
@@ -357,6 +374,13 @@ function updateResult() {
       resultTextEl.textContent = "判定前にキャリブレーションを完了してください。";
       guidanceTextEl.textContent = "「キャリブレーション開始」→「基準点を記録」を2回行ってください。";
     }
+    updateGuideLine(0, "pending");
+    updateToleranceOverlay(toleranceCm, 0);
+    return;
+  }
+  if (!isGroundReadyForJudgement()) {
+    resultTextEl.textContent = "地面基準を確認中のため、判定を保留しています。";
+    guidanceTextEl.textContent = "カメラを少し下げて地面を画角下部に入れてください。";
     updateGuideLine(0, "pending");
     updateToleranceOverlay(toleranceCm, 0);
     return;
@@ -375,7 +399,11 @@ function updateResult() {
   const adjusted = adjustDeltaByReferenceConfidence(rawDeltaCm);
   const deltaJudge = judgeDelta(adjusted.effectiveDelta, toleranceCm);
   const risk = evaluateEnvironmentRisk(toleranceCm, environmentProfile);
-  const sourceLabel = usingVideoInput ? "動画入力（ダミーカメラ）" : "シミュレーション入力";
+  const sourceLabel = inputSourceEl.value === "camera"
+    ? "実カメラ入力"
+    : usingVideoInput
+      ? "動画入力（ダミーカメラ）"
+      : "シミュレーション入力";
   resultTextEl.textContent =
     `判定: ${deltaJudge} / 差分: ${rawDeltaCm.toFixed(1)}cm` +
     `（評価値: ${adjusted.effectiveDelta.toFixed(1)}cm）` +
@@ -509,10 +537,90 @@ function updateGroundDebugUi() {
     groundDebugEl.textContent = "地面推定: 評価中";
     return;
   }
-  const state = groundDebug.detected ? "OK" : "未検出";
+  const state = groundStableDetected ? "OK" : "未検出";
+  const rawState = groundDebug.detected ? "OK" : "未検出";
   const coverage = (groundDebug.coverage * 100).toFixed(0);
   const edge = groundDebug.edgeStrength.toFixed(1);
-  groundDebugEl.textContent = `地面推定: ${state} (coverage ${coverage}% / edge ${edge})`;
+  const roi = `${(groundRoiStartRatio * 100).toFixed(0)}-${(groundRoiEndRatio * 100).toFixed(0)}%`;
+  groundDebugEl.textContent = `地面推定: ${state} (raw ${rawState} / coverage ${coverage}% / edge ${edge} / roi ${roi})`;
+}
+
+function detectAdaptiveGroundRoi(frame, width, height) {
+  const minY = Math.floor(height * 0.50);
+  const maxY = Math.floor(height * 0.98);
+  const stepX = 2;
+  const rowScore = new Array(height).fill(0);
+
+  for (let y = minY; y < maxY - 1; y += 1) {
+    let edgeSum = 0;
+    let valid = 0;
+    for (let x = 0; x < width; x += stepX) {
+      const idx = (y * width + x) * 4;
+      const idx2 = ((y + 1) * width + x) * 4;
+      const r = frame.data[idx];
+      const g = frame.data[idx + 1];
+      const b = frame.data[idx + 2];
+      const r2 = frame.data[idx2];
+      const g2 = frame.data[idx2 + 1];
+      const b2 = frame.data[idx2 + 2];
+      const luma = (0.299 * r) + (0.587 * g) + (0.114 * b);
+      const luma2 = (0.299 * r2) + (0.587 * g2) + (0.114 * b2);
+      edgeSum += Math.abs(luma2 - luma);
+      valid += 1;
+    }
+    rowScore[y] = valid > 0 ? edgeSum / valid : 0;
+  }
+
+  const bandPx = Math.max(16, Math.round(height * 0.24));
+  let bestStart = Math.floor(height * 0.68);
+  let bestScore = -1;
+  for (let y = minY; y <= maxY - bandPx; y += 1) {
+    let sum = 0;
+    for (let j = 0; j < bandPx; j += 1) {
+      sum += rowScore[y + j];
+    }
+    const avg = sum / bandPx;
+    if (avg > bestScore) {
+      bestScore = avg;
+      bestStart = y;
+    }
+  }
+
+  const bestEnd = Math.min(height - 1, bestStart + bandPx);
+  const targetStart = bestStart / height;
+  const targetEnd = bestEnd / height;
+  groundRoiStartRatio = (groundRoiStartRatio * 0.8) + (targetStart * 0.2);
+  groundRoiEndRatio = (groundRoiEndRatio * 0.8) + (targetEnd * 0.2);
+}
+
+function updateGroundDynamicThresholds(detected) {
+  const baseCoverage = 0.14;
+  const baseEdge = 5.5;
+  if (!detected) {
+    groundMissStreak += 1;
+    groundEffectiveCoverageThreshold = Math.max(0.06, baseCoverage - (0.008 * groundMissStreak));
+    groundEffectiveEdgeThreshold = Math.max(2.0, baseEdge - (0.28 * groundMissStreak));
+  } else {
+    groundMissStreak = 0;
+    groundEffectiveCoverageThreshold = (groundEffectiveCoverageThreshold * 0.65) + (baseCoverage * 0.35);
+    groundEffectiveEdgeThreshold = (groundEffectiveEdgeThreshold * 0.65) + (baseEdge * 0.35);
+  }
+}
+
+function updateGroundStableState(rawDetected) {
+  if (rawDetected) {
+    groundConsecutiveOk += 1;
+    groundConsecutiveMiss = 0;
+    if (!groundStableDetected && groundConsecutiveOk >= GROUND_OK_FRAMES_TO_LOCK) {
+      groundStableDetected = true;
+    }
+    return;
+  }
+  groundConsecutiveMiss += 1;
+  groundConsecutiveOk = 0;
+  if (groundStableDetected && groundConsecutiveMiss >= GROUND_MISS_FRAMES_TO_DROP) {
+    groundStableDetected = false;
+  }
 }
 
 function estimateGroundPresenceFromVideo() {
@@ -530,8 +638,9 @@ function estimateGroundPresenceFromVideo() {
   detectCtx.drawImage(videoPreviewEl, 0, 0, targetWidth, targetHeight);
   const frame = detectCtx.getImageData(0, 0, targetWidth, targetHeight);
 
-  const yStart = Math.floor(targetHeight * 0.68);
-  const yEnd = Math.floor(targetHeight * 0.96);
+  detectAdaptiveGroundRoi(frame, targetWidth, targetHeight);
+  const yStart = Math.max(0, Math.floor(targetHeight * groundRoiStartRatio));
+  const yEnd = Math.min(targetHeight, Math.ceil(targetHeight * groundRoiEndRatio));
   let total = 0;
   let candidate = 0;
   let edgeAcc = 0;
@@ -563,11 +672,23 @@ function estimateGroundPresenceFromVideo() {
 
   const coverage = total > 0 ? candidate / total : 0;
   const edgeStrength = total > 0 ? edgeAcc / total : 0;
-  const detected = coverage >= 0.14 && edgeStrength >= 5.5;
+  const detected =
+    coverage >= groundEffectiveCoverageThreshold &&
+    edgeStrength >= groundEffectiveEdgeThreshold;
+  updateGroundDynamicThresholds(detected);
+  updateGroundStableState(detected);
   groundDebug = { ready: true, detected, coverage, edgeStrength };
   detectionDebug.groundCoverage = Number(coverage.toFixed(3));
   detectionDebug.groundEdgeStrength = Number(edgeStrength.toFixed(3));
   detectionDebug.groundDetected = detected;
+  detectionDebug.groundRoiStart = Number(groundRoiStartRatio.toFixed(3));
+  detectionDebug.groundRoiEnd = Number(groundRoiEndRatio.toFixed(3));
+  detectionDebug.groundEffectiveCoverageThreshold = Number(groundEffectiveCoverageThreshold.toFixed(3));
+  detectionDebug.groundEffectiveEdgeThreshold = Number(groundEffectiveEdgeThreshold.toFixed(3));
+  detectionDebug.groundMissStreak = groundMissStreak;
+  detectionDebug.groundStableDetected = groundStableDetected;
+  detectionDebug.groundConsecutiveOk = groundConsecutiveOk;
+  detectionDebug.groundConsecutiveMiss = groundConsecutiveMiss;
   updateGroundDebugUi();
 }
 
@@ -688,6 +809,14 @@ function stopCamera() {
   videoPreviewEl.srcObject = null;
   videoStatusEl.textContent = "カメラ停止";
   groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
+  groundRoiStartRatio = 0.68;
+  groundRoiEndRatio = 0.96;
+  groundMissStreak = 0;
+  groundEffectiveCoverageThreshold = 0.14;
+  groundEffectiveEdgeThreshold = 5.5;
+  groundStableDetected = false;
+  groundConsecutiveOk = 0;
+  groundConsecutiveMiss = 0;
   updateGroundDebugUi();
 }
 

@@ -38,7 +38,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.1";
+const VERSION = "v0.2.2";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }
@@ -271,6 +271,7 @@ function setInputSourceUi() {
   const tapLayerActive = usingVideoInput && manualMode && calibrationState === "capturing";
   surfaceTapLayerEl.disabled = !tapLayerActive;
   surfaceTapLayerEl.classList.toggle("active", tapLayerActive);
+  videoPreviewEl.controls = !usingCameraInput;
 
   if (inputSourceEl.value === "video") {
     sourceNoticeEl.textContent = "保存動画をダミーカメラ入力として使います。差分値は選択シナリオに応じて擬似生成されます。";
@@ -371,9 +372,26 @@ async function startCamera() {
     });
     videoPreviewEl.pause();
     videoPreviewEl.removeAttribute("src");
+    videoPreviewEl.srcObject = null;
+    videoPreviewEl.muted = true;
+    videoPreviewEl.autoplay = true;
+    videoPreviewEl.playsInline = true;
+    videoPreviewEl.setAttribute("playsinline", "");
+    videoPreviewEl.setAttribute("webkit-playsinline", "");
     videoPreviewEl.srcObject = cameraStream;
+    await new Promise((resolve) => {
+      if (videoPreviewEl.readyState >= 1) {
+        resolve();
+        return;
+      }
+      videoPreviewEl.onloadedmetadata = () => resolve();
+    });
     await videoPreviewEl.play();
-    videoStatusEl.textContent = "カメラ入力中";
+    const width = videoPreviewEl.videoWidth;
+    const height = videoPreviewEl.videoHeight;
+    videoStatusEl.textContent = width > 0 && height > 0
+      ? `カメラ入力中 (${width}x${height})`
+      : "カメラ入力中";
     autoReference.ready = false;
     autoReference.confidence = 0;
     resetAutoReferenceHistory();

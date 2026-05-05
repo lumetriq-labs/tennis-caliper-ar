@@ -39,7 +39,7 @@ const exportFeedbackBtnEl = document.getElementById("exportFeedbackBtn");
 const feedbackStatusEl = document.getElementById("feedbackStatus");
 const versionEl = document.getElementById("version");
 
-const VERSION = "v0.2.5";
+const VERSION = "v0.2.6";
 if (versionEl) {
   versionEl.textContent = `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 }
@@ -312,7 +312,7 @@ function updateGuideLine(deltaCm, state) {
   guideStemEl.style.left = `${xCenter}%`;
 }
 
-function updateToleranceOverlay(toleranceCm, deltaCm) {
+function updateToleranceOverlay(toleranceCm) {
   if (!(inputSourceEl.value === "video" || inputSourceEl.value === "camera")) {
     centerLineEl.classList.add("hidden");
     toleranceBandEl.classList.add("hidden");
@@ -321,10 +321,8 @@ function updateToleranceOverlay(toleranceCm, deltaCm) {
   centerLineEl.classList.remove("hidden");
   toleranceBandEl.classList.remove("hidden");
 
-  const clamped = Math.max(-8, Math.min(8, deltaCm));
-  const centerY = 50 - (clamped / 8) * 20;
+  const centerY = 50;
   const halfRangePercent = (Math.max(1, Math.min(5, toleranceCm)) / 8) * 20;
-  // 許容帯を「ガイド線中心」に合わせて動かす
   toleranceBandEl.style.top = `${centerY - halfRangePercent}%`;
   toleranceBandEl.style.height = `${halfRangePercent * 2}%`;
   centerLineEl.style.top = `${centerY}%`;
@@ -375,14 +373,14 @@ function updateResult() {
       guidanceTextEl.textContent = "「キャリブレーション開始」→「基準点を記録」を2回行ってください。";
     }
     updateGuideLine(0, "pending");
-    updateToleranceOverlay(toleranceCm, 0);
+    updateToleranceOverlay(toleranceCm);
     return;
   }
   if (!isGroundReadyForJudgement()) {
     resultTextEl.textContent = "地面基準を確認中のため、判定を保留しています。";
     guidanceTextEl.textContent = "カメラを少し下げて地面を画角下部に入れてください。";
     updateGuideLine(0, "pending");
-    updateToleranceOverlay(toleranceCm, 0);
+    updateToleranceOverlay(toleranceCm);
     return;
   }
 
@@ -416,7 +414,7 @@ function updateResult() {
   else if (deltaJudge.startsWith("高い")) updateGuideLine(adjusted.effectiveDelta, "high");
   else updateGuideLine(adjusted.effectiveDelta, "low");
 
-  updateToleranceOverlay(toleranceCm, adjusted.effectiveDelta);
+  updateToleranceOverlay(toleranceCm);
 }
 
 function clearCalibrationPoints() {

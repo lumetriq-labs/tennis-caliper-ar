@@ -490,6 +490,59 @@ function detectAutoReferenceFromVideo() {
     return;
   }
 
+  // 局所平面近似: ホワイトバンドの傾きを線形近似して、斜め撮影時のT字判定を安定化する。
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const sampleBandY = (x, yCenter, range) => {
+    const xClamped = clamp(x, 0, targetWidth - 1);
+    let best = -1;
+    let bestYLocal = yCenter;
+    for (let dy = -range; dy <= range; dy += 1) {
+      const y = yCenter + dy;
+      if (y < yMin || y >= yMax) continue;
+      if (whiteMask[y * targetWidth + xClamped] === 1) {
+        const score = range - Math.abs(dy);
+        if (score > best) {
+          best = score;
+          bestYLocal = y;
+        }
+      }
+    }
+    return best >= 0 ? bestYLocal : null;
+  };
+
+  const fitPoints = [];
+  const xStartFit = Math.floor(targetWidth * 0.12);
+  const xEndFit = Math.floor(targetWidth * 0.88);
+  const xStep = Math.max(8, Math.round(targetWidth * 0.06));
+  const searchRange = Math.max(6, Math.round(targetHeight * 0.06));
+  for (let x = xStartFit; x <= xEndFit; x += xStep) {
+    const yHit = sampleBandY(x, bestY, searchRange);
+    if (yHit !== null) fitPoints.push({ x, y: yHit });
+  }
+
+  let bandSlope = 0;
+  let bandOffset = bestY;
+  if (fitPoints.length >= 4) {
+    let sx = 0;
+    let sy = 0;
+    let sxx = 0;
+    let sxy = 0;
+    fitPoints.forEach((p) => {
+      sx += p.x;
+      sy += p.y;
+      sxx += p.x * p.x;
+      sxy += p.x * p.y;
+    });
+    const n = fitPoints.length;
+    const den = (n * sxx) - (sx * sx);
+    if (Math.abs(den) > 1e-6) {
+      bandSlope = ((n * sxy) - (sx * sy)) / den;
+      bandOffset = (sy - (bandSlope * sx)) / n;
+    }
+  }
+  const yOnBandAt = (x) => clamp(Math.round((bandSlope * x) + bandOffset), yMin, yMax - 1);
+  const bandYAtX = yOnBandAt(bestX);
+
   // T字近傍（交点周辺）で横線・縦線の白画素密度を評価する
   // 公式ネットは中央が少し下がるため、縦線は「交点より下側」をやや重視する。
   const hHalf = Math.max(8, Math.round(targetWidth * 0.08));
@@ -501,11 +554,12 @@ function detectAutoReferenceFromVideo() {
   for (let dx = -hHalf; dx <= hHalf; dx += 1) {
     const x = bestX + dx;
     if (x >= 0 && x < targetWidth) {
-      if (whiteMask[bestY * targetWidth + x] === 1) horizontalHits += 1;
+      const y = yOnBandAt(x);
+      if (whiteMask[y * targetWidth + x] === 1) horizontalHits += 1;
     }
   }
   for (let dy = -vHalf; dy <= vHalf; dy += 1) {
-    const y = bestY + dy;
+    const y = bandYAtX + dy;
     if (y >= 0 && y < targetHeight) {
       if (whiteMask[y * targetWidth + bestX] === 1) {
         verticalHitsSym += 1;
@@ -524,7 +578,8 @@ function detectAutoReferenceFromVideo() {
   let xStart = -1;
   let xEnd = -1;
   for (let x = 0; x < targetWidth; x += 1) {
-    if (whiteMask[bestY * targetWidth + x] === 1) {
+    const y = yOnBandAt(x);
+    if (whiteMask[y * targetWidth + x] === 1) {
       if (xStart < 0) xStart = x;
       xEnd = x;
     }
@@ -541,6 +596,7 @@ function detectAutoReferenceFromVideo() {
   detectionDebug = {
     rowStrength,
     colStrength,
+    bandSlope,
     tHorizontalScore,
     tVerticalScoreSym,
     tVerticalScoreDown,
@@ -550,7 +606,7 @@ function detectAutoReferenceFromVideo() {
   };
   sample.ready = true;
   sample.confidence = Math.min(1, (rowStrength * 0.35) + (colStrength * 0.35) + (tScore * 0.3));
-  sample.yPercent = (bestY / targetHeight) * 100;
+  sample.yPercent = (bandYAtX / targetHeight) * 100;
   sample.xStartPercent = (xStart / targetWidth) * 100;
   sample.xEndPercent = (xEnd / targetWidth) * 100;
   pushAutoReferenceSample(sample);

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tennis-caliper-ar (local prototype)</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>tennis-caliper-ar</h1>
+    <p>ローカル検証用プロトタイプ（判定ロジック先行）</p>
+
+    <section class="card">
+      <h2>入力</h2>
+      <label>
+        入力ソース
+        <select id="inputSource">
+          <option value="simulation" selected>シミュレーション値（開発用）</option>
+          <option value="video">保存動画（ダミーカメラ入力）</option>
+          <option value="camera">実カメラ（iPhone実機テスト）</option>
+        </select>
+      </label>
+
+      <div id="cameraControlsRow" class="actions hidden">
+        <button id="startCameraBtn" type="button">カメラ開始</button>
+        <button id="stopCameraBtn" type="button">カメラ停止</button>
+      </div>
+
+      <label id="videoFileRow" class="hidden">
+        入力動画ファイル
+        <input id="videoFile" type="file" accept="video/*" />
+      </label>
+
+      <label id="videoScenarioRow" class="hidden">
+        動画入力シナリオ
+        <select id="videoScenario">
+          <option value="stable" selected>stable（安定）</option>
+          <option value="wobble">wobble（上下揺れ）</option>
+          <option value="drift">drift（徐々にズレる）</option>
+          <option value="noisy">noisy（ノイズ多め）</option>
+        </select>
+      </label>
+
+      <p id="sourceNotice" class="notice">
+        開発用モードです。本番ではカメラ計測値を自動入力します。
+      </p>
+
+      <label>
+        許容誤差モード
+        <select id="toleranceMode">
+          <option value="1">±1cm</option>
+          <option value="3" selected>±3cm</option>
+          <option value="5">±5cm</option>
+        </select>
+      </label>
+
+      <label>
+        環境プロファイル
+        <select id="environmentProfile">
+          <option value="DAY_CLEAR">DAY_CLEAR（晴天屋外）</option>
+          <option value="DAY_CLOUDY">DAY_CLOUDY（曇天屋外）</option>
+          <option value="NIGHT_COURT">NIGHT_COURT（ナイター）</option>
+          <option value="INDOOR_LED">INDOOR_LED（屋内LED）</option>
+        </select>
+      </label>
+
+      <label>
+        コート種別
+        <select id="courtType">
+          <option value="hard">ハード</option>
+          <option value="clay">クレイ</option>
+          <option value="artificial">人工芝</option>
+        </select>
+      </label>
+
+      <label>
+        シミュレーション差分（cm）
+        <input id="deltaCm" type="number" value="2" step="0.1" />
+      </label>
+
+      <button id="judgeBtn" type="button">判定する（手動再評価）</button>
+      <p class="notice">判定は基本的にリアルタイムで自動更新されます。</p>
+    </section>
+
+    <section class="card">
+      <h2>キャリブレーション（簡易フロー）</h2>
+      <label>
+        基準推定モード
+        <select id="referenceMode">
+          <option value="auto" selected>自動（ライン/ホワイトテープ推定）</option>
+          <option value="manual">手動（2点タップ）</option>
+        </select>
+      </label>
+      <p id="calibrationStatus" class="notice">状態: 未実施</p>
+      <div class="actions">
+        <button id="startCalibrationBtn" type="button">キャリブレーション開始</button>
+        <button id="capturePointBtn" type="button" disabled>基準点を記録</button>
+        <button id="resetCalibrationBtn" type="button">リセット</button>
+      </div>
+      <p class="notice">
+        判定はキャリブレーション完了後（2点記録後）に有効になります。
+      </p>
+    </section>
+
+    <section class="card hidden" id="videoPreviewCard">
+      <h2>動画入力プレビュー</h2>
+      <p class="notice">
+        任意: 画面下部の地面にテニスボールを置くと、基準推定の安定化に役立つ場合があります。
+      </p>
+      <div id="calibrationSurface" class="surface">
+        <video id="videoPreview" controls playsinline muted></video>
+        <div id="autoReferenceLine" class="auto-reference-line hidden"></div>
+        <div id="centerLine" class="center-line hidden"></div>
+        <div id="toleranceBand" class="tolerance-band hidden"></div>
+        <div id="guideLine" class="guide-line hidden"></div>
+        <button id="surfaceTapLayer" class="surface-tap-layer" type="button" aria-label="キャリブレーション点を記録"></button>
+      </div>
+      <p id="videoStatus" class="notice">動画未選択</p>
+    </section>
+
+    <section class="card">
+      <h2>判定結果</h2>
+      <p id="resultText">未判定</p>
+      <p id="guidanceText" class="guidance">ガイダンスはここに表示されます。</p>
+    </section>
+
+    <section class="card">
+      <h2>フィードバック収集（テスター向け）</h2>
+      <p class="notice">
+        うまくいかなかったケースを記録して、JSONとして保存できます。
+      </p>
+
+      <label>
+        事象種別
+        <select id="feedbackCategory">
+          <option value="tracking">トラッキング不安定</option>
+          <option value="calibration">キャリブレーション失敗</option>
+          <option value="judge">判定が期待と違う</option>
+          <option value="ui">UIがわかりにくい</option>
+          <option value="other">その他</option>
+        </select>
+      </label>
+
+      <label>
+        期待した動作
+        <textarea id="feedbackExpected" rows="2" placeholder="例: ±3cmモードでOK判定になる想定"></textarea>
+      </label>
+
+      <label>
+        実際の結果
+        <textarea id="feedbackActual" rows="2" placeholder="例: 高い（調整が必要）と出た"></textarea>
+      </label>
+
+      <label>
+        再現手順
+        <textarea id="feedbackSteps" rows="3" placeholder="1) 動画入力を選択 2) wobble 3) 00:12付近で..."></textarea>
+      </label>
+
+      <div class="actions">
+        <button id="addFeedbackBtn" type="button">フィードバックを追加</button>
+        <button id="exportFeedbackBtn" type="button">JSONを書き出し</button>
+      </div>
+
+      <p id="feedbackStatus" class="notice">記録件数: 0</p>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -191,3 +191,22 @@ button {
   border-bottom: 1px dashed rgba(34, 197, 94, 0.8);
   pointer-events: none;
 }
+
+.roi-outline {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  width: 100%;
+  border: 2px dashed rgba(56, 189, 248, 0.95);
+  background: rgba(56, 189, 248, 0.08);
+  pointer-events: none;
+}
+
+.debug-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

@@ -36,16 +36,21 @@
         <input id="edgeThreshold" type="range" min="1.0" max="20.0" step="0.1" value="5.5" />
       </label>
       <p id="edgeThresholdText" class="notice">edge閾値: 5.5</p>
+      <label>
+        <input id="showCandidates" type="checkbox" checked />
+        候補画素ポイントを表示
+      </label>
     </section>
 
     <section class="card">
       <h2>プレビュー</h2>
       <div class="surface" id="surface">
         <video id="videoPreview" playsinline webkit-playsinline autoplay muted></video>
-        <div id="roiOverlay" class="tolerance-band"></div>
+        <canvas id="debugLayer" class="debug-layer"></canvas>
+        <div id="roiOverlay" class="roi-outline"></div>
       </div>
       <p id="result" class="notice">地面推定: 待機中</p>
-      <p id="metrics" class="notice">coverage: - / edge: -</p>
+      <p id="metrics" class="notice">coverage: - / edge: - / roi: -</p>
     </section>
   </main>
 

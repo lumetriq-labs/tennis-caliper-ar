@@ -501,6 +501,10 @@ function updateGroundDebugUi() {
     groundDebugEl.textContent = "地面推定: 未評価";
     return;
   }
+  if (!videoPreviewEl.srcObject && !videoPreviewEl.src) {
+    groundDebugEl.textContent = "地面推定: カメラ開始待ち";
+    return;
+  }
   if (!groundDebug.ready) {
     groundDebugEl.textContent = "地面推定: 評価中";
     return;
@@ -559,7 +563,7 @@ function estimateGroundPresenceFromVideo() {
 
   const coverage = total > 0 ? candidate / total : 0;
   const edgeStrength = total > 0 ? edgeAcc / total : 0;
-  const detected = coverage >= 0.22 && edgeStrength >= 8.5;
+  const detected = coverage >= 0.14 && edgeStrength >= 5.5;
   groundDebug = { ready: true, detected, coverage, edgeStrength };
   detectionDebug.groundCoverage = Number(coverage.toFixed(3));
   detectionDebug.groundEdgeStrength = Number(edgeStrength.toFixed(3));
@@ -683,6 +687,8 @@ function stopCamera() {
   videoPreviewEl.pause();
   videoPreviewEl.srcObject = null;
   videoStatusEl.textContent = "カメラ停止";
+  groundDebug = { ready: false, detected: false, coverage: 0, edgeStrength: 0 };
+  updateGroundDebugUi();
 }
 
 function capturePointFromSurface(event) {
@@ -1045,4 +1051,3 @@ setInputSourceUi();
 updateCalibrationStatus();
 updateFeedbackStatus("未記録");
 updateResult();
-startCamera();

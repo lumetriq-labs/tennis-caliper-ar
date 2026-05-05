@@ -11,11 +11,16 @@ const edgeThresholdEl = document.getElementById("edgeThreshold");
 const coverageThresholdTextEl = document.getElementById("coverageThresholdText");
 const edgeThresholdTextEl = document.getElementById("edgeThresholdText");
 const showCandidatesEl = document.getElementById("showCandidates");
+const autoRelaxThresholdEl = document.getElementById("autoRelaxThreshold");
+const effectiveThresholdTextEl = document.getElementById("effectiveThresholdText");
 
 let cameraStream = null;
 let rafId = null;
 let smoothedRoiStart = 0.68;
 let smoothedRoiEnd = 0.96;
+let missStreak = 0;
+let effectiveCoverageThreshold = Number(coverageThresholdEl.value);
+let effectiveEdgeThreshold = Number(edgeThresholdEl.value);
 
 const detectCanvas = document.createElement("canvas");
 const detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true });
@@ -34,6 +39,13 @@ function clearDebugLayer() {
 function updateThresholdLabels() {
   coverageThresholdTextEl.textContent = `coverage閾値: ${Number(coverageThresholdEl.value).toFixed(2)}`;
   edgeThresholdTextEl.textContent = `edge閾値: ${Number(edgeThresholdEl.value).toFixed(1)}`;
+  if (!autoRelaxThresholdEl.checked) {
+    effectiveCoverageThreshold = Number(coverageThresholdEl.value);
+    effectiveEdgeThreshold = Number(edgeThresholdEl.value);
+    missStreak = 0;
+  }
+  effectiveThresholdTextEl.textContent =
+    `effective閾値: coverage ${effectiveCoverageThreshold.toFixed(2)} / edge ${effectiveEdgeThreshold.toFixed(1)} / missStreak ${missStreak}`;
 }
 
 function updateRoiOverlay(roiStartRatio = 0.68, roiEndRatio = 0.96) {
@@ -147,8 +159,8 @@ function estimateGroundPresence() {
   const coverage = total > 0 ? candidate / total : 0;
   const edgeStrength = total > 0 ? edgeAcc / total : 0;
   const detected =
-    coverage >= Number(coverageThresholdEl.value) &&
-    edgeStrength >= Number(edgeThresholdEl.value);
+    coverage >= effectiveCoverageThreshold &&
+    edgeStrength >= effectiveEdgeThreshold;
   return {
     detected,
     coverage,
@@ -159,6 +171,29 @@ function estimateGroundPresence() {
     sampleWidth: targetWidth,
     sampleHeight: targetHeight
   };
+}
+
+function updateDynamicThresholds(detected) {
+  const baseCoverage = Number(coverageThresholdEl.value);
+  const baseEdge = Number(edgeThresholdEl.value);
+  if (!autoRelaxThresholdEl.checked) {
+    effectiveCoverageThreshold = baseCoverage;
+    effectiveEdgeThreshold = baseEdge;
+    missStreak = 0;
+    return;
+  }
+
+  if (!detected) {
+    missStreak += 1;
+    // 未検出が続くほど閾値を緩める（下限あり）
+    effectiveCoverageThreshold = Math.max(0.06, baseCoverage - (0.008 * missStreak));
+    effectiveEdgeThreshold = Math.max(2.0, baseEdge - (0.28 * missStreak));
+  } else {
+    missStreak = 0;
+    // 検出できたら基準値へ戻す
+    effectiveCoverageThreshold = (effectiveCoverageThreshold * 0.65) + (baseCoverage * 0.35);
+    effectiveEdgeThreshold = (effectiveEdgeThreshold * 0.65) + (baseEdge * 0.35);
+  }
 }
 
 function drawCandidatePoints(result) {
@@ -179,10 +214,13 @@ function tick() {
     metricsEl.textContent = "coverage: - / edge: - / roi: -";
     clearDebugLayer();
   } else {
+    updateDynamicThresholds(result.detected);
     resultEl.textContent = `地面推定: ${result.detected ? "OK" : "未検出"}`;
     metricsEl.textContent =
       `coverage: ${result.coverage.toFixed(3)} / edge: ${result.edgeStrength.toFixed(3)} / roi: ${(result.roiStart * 100).toFixed(1)}%-${(result.roiEnd * 100).toFixed(1)}%`;
     drawCandidatePoints(result);
+    effectiveThresholdTextEl.textContent =
+      `effective閾値: coverage ${effectiveCoverageThreshold.toFixed(2)} / edge ${effectiveEdgeThreshold.toFixed(1)} / missStreak ${missStreak}`;
   }
   rafId = requestAnimationFrame(tick);
 }
@@ -230,6 +268,7 @@ edgeThresholdEl.addEventListener("input", updateThresholdLabels);
 showCandidatesEl.addEventListener("change", () => {
   if (!showCandidatesEl.checked) clearDebugLayer();
 });
+autoRelaxThresholdEl.addEventListener("change", updateThresholdLabels);
 startBtnEl.addEventListener("click", startCamera);
 stopBtnEl.addEventListener("click", stopCamera);
 
